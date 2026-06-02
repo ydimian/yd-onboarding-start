@@ -1,9 +1,9 @@
 # Tiny Tapeout project information
 project:
-  title:        ""      # Asic Onboarding Project - Youhanna Dimian
-  author:       ""      # Youhanna Dimian
-  discord:      ""      # Youhanna Dimian (EatGebnaRoumy)
-  description:  ""      # SPI-controlled PWM peripheral for Tiny Tapeout.
+  title:        "Asic Onboarding Project - Youhanna Dimian"
+  author:       "Youhanna Dimian"
+  discord:      "Youhanna Dimian (EatGebnaRoumy)"
+  description:  "SPI-controlled PWM peripheral for Tiny Tapeout."
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     0       # Clock frequency in Hz (or 0 if not applicable)
 
