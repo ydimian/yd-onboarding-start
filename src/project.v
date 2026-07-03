@@ -24,11 +24,20 @@ module tt_um_youdim_onboarding (
   wire [7:0] en_reg_pwm_15_8;
   wire [7:0] pwm_duty_cycle;
 
-  assign en_reg_out_7_0   = 8'h00;
-  assign en_reg_out_15_8  = 8'h00;
-  assign en_reg_pwm_7_0   = 8'h00;
-  assign en_reg_pwm_15_8  = 8'h00;
-  assign pwm_duty_cycle   = 8'h00;
+  spi_peripheral spi_peripheral_inst (
+    .clk(clk),
+    .rst_n(rst_n),
+
+    .sclk(ui_in[0]),
+    .copi(ui_in[1]),
+    .ncs(ui_in[2]),
+
+    .en_reg_out_7_0(en_reg_out_7_0),
+    .en_reg_out_15_8(en_reg_out_15_8),
+    .en_reg_pwm_7_0(en_reg_pwm_7_0),
+    .en_reg_pwm_15_8(en_reg_pwm_15_8),
+    .pwm_duty_cycle(pwm_duty_cycle)
+  );
 
   pwm_peripheral pwm_peripheral_inst (
     .clk(clk),
@@ -41,6 +50,6 @@ module tt_um_youdim_onboarding (
     .out({uio_out, uo_out})
   );
 
-  wire _unused = &{ena, ui_in, uio_in, 1'b0};
+  wire _unused = &{ena, ui_in[7:3], uio_in, 1'b0};
 
 endmodule
