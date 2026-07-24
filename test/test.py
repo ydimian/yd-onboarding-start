@@ -4,9 +4,19 @@
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge
+from cocotb.triggers import FallingEdge
 from cocotb.triggers import ClockCycles
+from cocotb.triggers import Timer
+from cocotb.triggers import First
 from cocotb.types import Logic
 from cocotb.types import LogicArray
+from cocotb.utils import get_sim_time
+
+# One PWM period is (12+1)*256 clk cycles @ 100 ns/cycle ~= 332.8 us.
+# Give the edge-wait a healthy margin above that before declaring the
+# signal "stuck" (used to detect the 0%/100% duty cycle edge cases,
+# where no edge will ever occur).
+PWM_TIMEOUT_NS = 400_000
 
 async def await_half_sclk(dut):
     """Wait for the SCLK signal to go high or low."""
@@ -83,6 +93,62 @@ async def send_spi_transaction(dut, r_w, address, data):
     await ClockCycles(dut.clk, 600)
     return ui_in_logicarray(ncs, bit, sclk)
 
+async def configure_pwm(dut, duty_cycle, out_mask=0x01, pwm_mask=0x01):
+    """Configure the PWM peripheral on uo_out[7:0].
+
+    - out_mask:  written to register 0x00 (enable output on uo_out bits)
+    - pwm_mask:  written to register 0x02 (enable PWM mode on those bits)
+    - duty_cycle: written to register 0x04 (0-255 -> 0-100%)
+    """
+    await send_spi_transaction(dut, 1, 0x00, out_mask)
+    await send_spi_transaction(dut, 1, 0x02, pwm_mask)
+    await send_spi_transaction(dut, 1, 0x04, duty_cycle)
+
+
+async def measure_pwm(dut, bit=0):
+    """Measure one period of the PWM signal on uo_out[bit].
+
+    Returns (freq_hz, duty_pct), or None if the signal never toggles
+    within PWM_TIMEOUT_NS (i.e. it is stuck low/high, as expected at the
+    0% / 100% duty cycle extremes).
+    """
+    signal = dut.uo_out[bit]
+
+    trigger = await First(RisingEdge(signal), Timer(PWM_TIMEOUT_NS, units="ns"))
+    if isinstance(trigger, Timer):
+        return None
+    t_rise1 = get_sim_time(units="ns")
+
+    trigger = await First(FallingEdge(signal), Timer(PWM_TIMEOUT_NS, units="ns"))
+    if isinstance(trigger, Timer):
+        return None
+    t_fall = get_sim_time(units="ns")
+
+    trigger = await First(RisingEdge(signal), Timer(PWM_TIMEOUT_NS, units="ns"))
+    if isinstance(trigger, Timer):
+        return None
+    t_rise2 = get_sim_time(units="ns")
+
+    period_ns = t_rise2 - t_rise1
+    high_ns = t_fall - t_rise1
+
+    freq_hz = 1e9 / period_ns
+    duty_pct = (high_ns / period_ns) * 100
+    return freq_hz, duty_pct
+
+
+async def reset_dut(dut):
+    clock = Clock(dut.clk, 100, units="ns")
+    cocotb.start_soon(clock.start())
+
+    dut.ena.value = 1
+    dut.ui_in.value = ui_in_logicarray(1, 0, 0)
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 5)
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 5)
+
+
 @cocotb.test()
 async def test_spi(dut):
     dut._log.info("Start SPI test")
@@ -151,11 +217,52 @@ async def test_spi(dut):
 
 @cocotb.test()
 async def test_pwm_freq(dut):
-    # Write your test here
+    dut._log.info("Start PWM Frequency test")
+    await reset_dut(dut)
+
+    # 50% duty cycle is guaranteed to toggle, so frequency is measurable.
+    await configure_pwm(dut, duty_cycle=0x80)
+    await ClockCycles(dut.clk, 100)
+
+    result = await measure_pwm(dut, bit=0)
+    assert result is not None, "PWM signal on uo_out[0] never toggled"
+    freq_hz, _ = result
+
+    dut._log.info(f"Measured PWM frequency: {freq_hz:.2f} Hz")
+    assert 2970 <= freq_hz <= 3030, f"Expected 3000 Hz +/-1%, got {freq_hz:.2f} Hz"
+
     dut._log.info("PWM Frequency test completed successfully")
 
 
 @cocotb.test()
 async def test_pwm_duty(dut):
-    # Write your test here
+    dut._log.info("Start PWM Duty Cycle test")
+    await reset_dut(dut)
+
+    # 0% duty cycle: output should stay low (never toggles).
+    await configure_pwm(dut, duty_cycle=0x00)
+    await ClockCycles(dut.clk, 100)
+    result = await measure_pwm(dut, bit=0)
+    assert result is None, "Expected uo_out[0] to stay low at 0% duty cycle"
+    assert dut.uo_out[0].value == 0
+
+    # 100% duty cycle: output should stay high (never toggles).
+    await send_spi_transaction(dut, 1, 0x04, 0xFF)
+    await ClockCycles(dut.clk, 100)
+    result = await measure_pwm(dut, bit=0)
+    assert result is None, "Expected uo_out[0] to stay high at 100% duty cycle"
+    assert dut.uo_out[0].value == 1
+
+    # 50% duty cycle: should measure ~50% high time.
+    await send_spi_transaction(dut, 1, 0x04, 0x80)
+    await ClockCycles(dut.clk, 100)
+    result = await measure_pwm(dut, bit=0)
+    assert result is not None, "PWM signal on uo_out[0] never toggled at 50% duty cycle"
+    _, duty_pct = result
+    expected_pct = (0x80 / 256) * 100
+    dut._log.info(f"Measured duty cycle: {duty_pct:.2f}% (expected ~{expected_pct:.2f}%)")
+    assert abs(duty_pct - expected_pct) <= 1, (
+        f"Expected ~{expected_pct:.2f}% duty cycle +/-1%, got {duty_pct:.2f}%"
+    )
+
     dut._log.info("PWM Duty Cycle test completed successfully")
