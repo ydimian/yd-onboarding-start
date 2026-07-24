@@ -51,6 +51,12 @@ module spi_peripheral (
     assign ncs_high         = (ncs_sync_1 == 1'b1);
     assign sclk_rising_edge = (sclk_prev == 1'b0) && (sclk_sync_1 == 1'b1);
 
+    // Shift register value after sampling the current COPI bit; computed
+    // once here since Icarus Verilog rejects bit-selecting a concatenation
+    // expression directly (e.g. {a, b}[7:0]).
+    wire [15:0] next_shift_reg;
+    assign next_shift_reg = {shift_reg[14:0], copi_sync_1};
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sclk_sync_0 <= 1'b0;
@@ -101,20 +107,20 @@ module spi_peripheral (
 
             // If nCS is low and SCLK rises, sample one COPI bit
             else if (sclk_rising_edge) begin
-                shift_reg <= {shift_reg[14:0], copi_sync_1};
+                shift_reg <= next_shift_reg;
 
                 if (bit_count == 5'd15) begin
                     bit_count <= 5'd0;
 
                     // Decode using the completed 16-bit packet
                     // Important: include the newest COPI bit manually.
-                    if ({shift_reg[14:0], copi_sync_1}[15] == 1'b1) begin
-                        case ({shift_reg[14:0], copi_sync_1}[14:8])
-                            7'h00: en_reg_out_7_0  <= {shift_reg[14:0], copi_sync_1}[7:0];
-                            7'h01: en_reg_out_15_8 <= {shift_reg[14:0], copi_sync_1}[7:0];
-                            7'h02: en_reg_pwm_7_0  <= {shift_reg[14:0], copi_sync_1}[7:0];
-                            7'h03: en_reg_pwm_15_8 <= {shift_reg[14:0], copi_sync_1}[7:0];
-                            7'h04: pwm_duty_cycle  <= {shift_reg[14:0], copi_sync_1}[7:0];
+                    if (next_shift_reg[15] == 1'b1) begin
+                        case (next_shift_reg[14:8])
+                            7'h00: en_reg_out_7_0  <= next_shift_reg[7:0];
+                            7'h01: en_reg_out_15_8 <= next_shift_reg[7:0];
+                            7'h02: en_reg_pwm_7_0  <= next_shift_reg[7:0];
+                            7'h03: en_reg_pwm_15_8 <= next_shift_reg[7:0];
+                            7'h04: pwm_duty_cycle  <= next_shift_reg[7:0];
                             default: begin
                                 // Invalid address: ignore
                             end
